@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>사냥용</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    body { background-color: #f8f9fa; }
+    .timer-container { max-width: 500px; margin-top: 10vh; }
+    .time-display { font-size: 5rem; font-family: monospace; font-weight: bold; color: #212529; }
+  </style>
+</head>
+<body>
+  <div class="container timer-container">
+    <div class="card shadow">
+      <div class="card-body text-center p-5">
+        <h3 class="card-title mb-4 text-secondary">메소 회수까지</h3>
+        
+        <div class="time-display mb-4" id="timeDisplay">120.0</div>
+
+        <div class="mb-3 text-start">
+          <label for="intervalInput" class="form-label fw-bold">회수 간격 (초)</label>
+          <input type="number" class="form-control form-control-lg" id="intervalInput" value="120" min="1">
+        </div>
+
+        <div class="mb-4 text-start">
+          <label for="volumeInput" class="form-label fw-bold">음량 크기 조절</label>
+          <input type="range" class="form-range" id="volumeInput" min="0" max="1" step="0.05" value="0.5">
+        </div>
+
+        <div class="d-grid gap-2">
+          <button id="startStopBtn" class="btn btn-primary btn-lg">시작</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const timeDisplay = document.getElementById('timeDisplay');
+    const intervalInput = document.getElementById('intervalInput');
+    const volumeInput = document.getElementById('volumeInput');
+    const startStopBtn = document.getElementById('startStopBtn');
+
+    // 동일한 폴더에 있는 GOWI.mp3 파일을 불러옵니다.
+    const audio = new Audio('GOWI.mp3');
+    
+    let isRunning = false;
+    let targetTime = 0;
+    let intervalMs = 0;
+
+    // 백그라운드 탭에서도 타이머가 멈추지 않도록 Web Worker를 인라인으로 생성합니다.
+    const workerCode = `
+      let timer = null;
+      self.onmessage = function(e) {
+        if (e.data === 'start') {
+          timer = setInterval(() => self.postMessage('tick'), 100); // 0.1초마다 메인 스레드로 신호 전달
+        } else if (e.data === 'stop') {
+          clearInterval(timer);
+        }
+      };
+    `;
+    const blob = new Blob([workerCode], { type: 'application/javascript' });
+    const worker = new Worker(URL.createObjectURL(blob));
+
+    // Worker에서 0.1초마다 보내는 신호를 받아 시간을 갱신합니다.
+    worker.onmessage = function() {
+      if (!isRunning) return;
+
+      const now = Date.now();
+      const timeLeft = targetTime - now;
+
+      if (timeLeft <= 0) {
+        // 목표 시간이 되면 오디오 재생
+        audio.volume = volumeInput.value;
+        audio.currentTime = 0; 
+        audio.play().catch(e => console.error("오디오 재생 오류 (브라우저 권한 문제일 수 있습니다):", e));
+
+        // 다음 알람을 위해 목표 시간 갱신
+        targetTime = now + intervalMs;
+        updateDisplay(intervalMs);
+      } else {
+        // 남은 시간 갱신
+        updateDisplay(timeLeft);
+      }
+    };
+
+    // 남은 시간을 화면에 표시하는 함수
+    function updateDisplay(ms) {
+      const seconds = Math.max(0, ms / 1000).toFixed(1);
+      timeDisplay.textContent = seconds;
+    }
+
+    // 시작/종료 버튼 클릭 이벤트
+    startStopBtn.addEventListener('click', () => {
+      if (isRunning) {
+        // 타이머 종료 처리
+        isRunning = false;
+        worker.postMessage('stop');
+        startStopBtn.textContent = '시작';
+        startStopBtn.classList.replace('btn-danger', 'btn-primary');
+        audio.pause();
+        audio.currentTime = 0;
+        updateDisplay(intervalInput.value * 1000); // 초기 설정된 시간으로 리셋
+      } else {
+        // 타이머 시작 처리
+        const seconds = parseFloat(intervalInput.value);
+        if (isNaN(seconds) || seconds <= 0) {
+          alert('유효한 시간(초)을 입력해주세요.');
+          return;
+        }
+        
+        // 브라우저 정책상 버튼을 누를 때 빈 소리라도 한 번 내줘야 백그라운드에서 오디오 재생 권한이 유지됩니다.
+        audio.volume = 0; 
+        audio.play().then(() => {
+          audio.pause();
+          audio.currentTime = 0;
+          audio.volume = volumeInput.value; 
+        }).catch(e => console.error(e));
+
+        intervalMs = seconds * 1000;
+        targetTime = Date.now() + intervalMs;
+        isRunning = true;
+        worker.postMessage('start');
+
+        startStopBtn.textContent = '종료';
+        startStopBtn.classList.replace('btn-primary', 'btn-danger');
+      }
+    });
+
+    // 사용자가 입력값을 변경할 때 이벤트
+    volumeInput.addEventListener('input', () => {
+      audio.volume = volumeInput.value;
+    });
+
+    intervalInput.addEventListener('input', () => {
+      if (!isRunning) {
+        updateDisplay(intervalInput.value * 1000);
+      }
+    });
+
+    // 최초 로드 시 화면에 시간 표시
+    updateDisplay(intervalInput.value * 1000);
+  </script>
+</body>
+</html>
